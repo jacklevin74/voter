@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use argon2::{self, Algorithm, Argon2, Params, PasswordVerifier, Version};
+use clap::{Arg, Command};
 use password_hash::PasswordHash;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,8 @@ use std::io::{Read, Write};
 use serde_json;
 use hex;
 use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
+use num_cpus;
 
 #[derive(Deserialize)]
 struct BlockRecord {
@@ -79,6 +82,29 @@ fn generate_keypair(file_path: &str) -> Result<Keypair, Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Argument parsing
+    let matches = Command::new("My App")
+        .version("1.0")
+        .author("Author Name <author@example.com>")
+        .about("Does awesome things")
+        .arg(
+            Arg::new("workers")
+                .short('w')
+                .long("workers")
+                .value_name("NUMBER")
+                .help("Sets the number of worker threads")
+                .takes_value(true),
+        )
+        .get_matches();
+
+    let num_threads = matches
+        .value_of("workers")
+        .map(|n| n.parse::<usize>().unwrap_or_else(|_| num_cpus::get()));
+
+    if let Some(n) = num_threads {
+        ThreadPoolBuilder::new().num_threads(n).build_global()?;
+    }
+
     let file_path = "id.json";
     let keypair = generate_keypair(file_path)?;
     let pubkey = keypair.pubkey();
@@ -101,7 +127,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut first = true;
 
     // Use rayon for parallel processing
-    let results: Vec<(u64, String, Vec<u8>)> = records
+    let results: Vec<(u64, String, String)> = records
         .par_iter()
         .map(|record| {
             let key = record.key.as_bytes();
@@ -121,25 +147,28 @@ fn main() -> Result<(), Box<dyn Error>> {
             };
             let block_id = record.block_id;
 
-            // Perform SHA-256 hashing
-            let mut hasher = Sha256::new();
-            hasher.update(&final_hash);
-            hasher.update(hash_to_verify.as_bytes());
-            let hash_result = hasher.finalize_reset().to_vec();
-
-            println!("hash_id: {} key: {} result: {}, target: {}", block_id,key_str,verification_result,flag);
-            (block_id, verification_result, hash_result)
+            println!("hash_id: {} key: {} result: {}, target: {}", block_id, key_str, verification_result, flag);
+            (block_id, verification_result, hash_to_verify.clone())
         })
         .collect();
 
+    // Sort the results by block_id in ascending order
+    let mut sorted_results = results.clone();
+    sorted_results.sort_by_key(|k| k.0);
+
     // Process the results to ensure order and update final hash
-    for (block_id, _verification_result, hash_result) in results {
+    for (block_id, _verification_result, hash_to_verify) in sorted_results {
         if first {
             first_block_id = block_id;
             first = false;
         }
         last_block_id = block_id;
-        final_hash = hash_result;
+
+        // Perform SHA-256 hashing
+        let mut hasher = Sha256::new();
+        hasher.update(&final_hash);
+        hasher.update(hash_to_verify.as_bytes());
+        final_hash = hasher.finalize_reset().to_vec();
     }
 
     // Prepare the output
