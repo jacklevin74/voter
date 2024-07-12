@@ -30,6 +30,7 @@ struct Output {
     first_block_id: u64,
     last_block_id: u64,
     final_hash: String,
+    pubkey: String,
 }
 
 fn verify_hash(key: &[u8], hashed_password: &str) -> Result<(), String> {
@@ -107,7 +108,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let file_path = "id.json";
     let keypair = generate_keypair(file_path)?;
-    let pubkey = keypair.pubkey();
+    let pubkey = keypair.pubkey().to_string();
 
     // Output the public key
     println!("Public Key: {}", pubkey);
@@ -176,11 +177,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         first_block_id,
         last_block_id,
         final_hash: hex::encode(final_hash),
+        pubkey, // Add public key to the output
     };
 
     // Serialize output to JSON
     let json_output = serde_json::to_string_pretty(&output)?;
     println!("\nFinal Output:\n{}", json_output);
+
+    // Send the output JSON via POST request to the specified URL
+    let post_url = "http://xenminer.mooo.com:5000/store_data";
+    let client = Client::new();
+    let response = client.post(post_url)
+        .header("Content-Type", "application/json")
+        .body(json_output)
+        .send()?;
+
+    if response.status().is_success() {
+        println!("Data successfully sent to the server.");
+    } else {
+        println!("Failed to send data to the server. Status: {}", response.status());
+    }
 
     Ok(())
 }
