@@ -11,6 +11,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use serde_json;
 use hex;
+use rayon::prelude::*;
 
 #[derive(Deserialize)]
 struct BlockRecord {
@@ -87,8 +88,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Existing functionality to fetch and verify blocks
     let client = Client::new();
-    let url = format!("http://xenblocks.io:4447/getblocks/lastblock");
-    let response = client.get(&url).send()?.text()?;
+    let response = client.get("http://xenblocks.io:4447/getblocks/lastblock")
+        .send()?
+        .text()?;
 
     let records: Vec<BlockRecord> = serde_json::from_str(&response)?;
 
@@ -98,34 +100,46 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut last_block_id = 0;
     let mut first = true;
 
-    for record in records {
-        let key = record.key.as_bytes();
-        let hash_to_verify = &record.hash_to_verify;
-        let flag = if hash_to_verify.contains("XEN11") {
-            "XEN11"
-        } else if hash_to_verify.contains("XUNI") {
-            "XUNI"
-        } else {
-            ""
-        };
+    // Use rayon for parallel processing
+    let results: Vec<(u64, String, Vec<u8>)> = records
+        .par_iter()
+        .map(|record| {
+            let key = record.key.as_bytes();
+            let key_str = &record.key;
+            let hash_to_verify = &record.hash_to_verify;
+            let flag = if hash_to_verify.contains("XEN11") {
+                "XEN11"
+            } else if hash_to_verify.contains("XUNI") {
+                "XUNI"
+            } else {
+                ""
+            };
 
-        match verify_hash(key, hash_to_verify) {
-            Ok(_) => println!("Key: {} {} - Verification: Ok", record.key, flag),
-            Err(err) => println!("Key: {} {} - Verification: Failed ({})", record.key, flag, err),
-        }
+            let verification_result = match verify_hash(key, hash_to_verify) {
+                Ok(_) => format!("Verification: Ok"),
+                Err(err) => format!("Verification failed: {}", err),
+            };
+            let block_id = record.block_id;
 
+            // Perform SHA-256 hashing
+            let mut hasher = Sha256::new();
+            hasher.update(&final_hash);
+            hasher.update(hash_to_verify.as_bytes());
+            let hash_result = hasher.finalize_reset().to_vec();
+
+            println!("hash_id: {} key: {} result: {}, target: {}", block_id,key_str,verification_result,flag);
+            (block_id, verification_result, hash_result)
+        })
+        .collect();
+
+    // Process the results to ensure order and update final hash
+    for (block_id, _verification_result, hash_result) in results {
         if first {
-            first_block_id = record.block_id;
+            first_block_id = block_id;
             first = false;
         }
-        last_block_id = record.block_id;
-
-        // Perform SHA-256 hashing
-        let mut hasher = Sha256::new();
-        hasher.update(&final_hash);
-        hasher.update(hash_to_verify.as_bytes());
-        final_hash = hasher.finalize_reset().to_vec();
-        print!(" CRC Hash: {} ", hex::encode(final_hash.clone()));
+        last_block_id = block_id;
+        final_hash = hash_result;
     }
 
     // Prepare the output
