@@ -117,8 +117,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let client = Client::new();
 
-    // Initialize the final hash with an empty hash (all zeros)
-    let mut final_hash = Sha256::new().finalize_reset().to_vec();
+    // Initialize the global hash
     let mut global_hash = String::new();
 
     loop {
@@ -141,7 +140,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let records: Vec<BlockRecord> = serde_json::from_str(&response)?;
 
             // Process the records
-            let results: Vec<(u64, String, String)> = records
+            let results: Vec<(u64, String, Vec<u8>)> = records
                 .par_iter()
                 .map(|record| {
                     let key = record.key.as_bytes();
@@ -162,7 +161,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let block_id = record.block_id;
 
                     println!("hash_id: {} key: {} result: {}, target: {}", block_id, key_str, verification_result, flag);
-                    (block_id, verification_result, hash_to_verify.clone())
+                    (block_id, verification_result, hex::decode(hash_to_verify).unwrap_or_default())
                 })
                 .collect();
 
@@ -174,28 +173,23 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // Sort the results by block_id in ascending order
             let mut sorted_results = results.clone();
-            sorted_results.sort_by_key(|k| k.0);
+            sorted_results.sort_by_key(|(block_id, _, _)| *block_id);
 
-            // Set the first block ID
+            // Serialize sorted_results to JSON
+            let serialized_sorted_results = serde_json::to_string(&sorted_results)?;
+
+            // Calculate the SHA-256 hash of the serialized JSON data
+            let final_hash = Sha256::digest(serialized_sorted_results.as_bytes());
+
+            // Set the first and last block ID
             let first_block_id = sorted_results.first().map(|res| res.0).unwrap_or(0);
-            let mut last_block_id = first_block_id;
-
-            // Process the results to ensure order and update final hash
-            for (block_id, _verification_result, hash_to_verify) in sorted_results {
-                last_block_id = block_id;
-
-                // Perform SHA-256 hashing
-                let mut hasher = Sha256::new();
-                hasher.update(&final_hash);
-                hasher.update(hash_to_verify.as_bytes());
-                final_hash = hasher.finalize_reset().to_vec();
-            }
+            let last_block_id = sorted_results.last().map(|res| res.0).unwrap_or(0);
 
             // Prepare the output
             let output = Output {
                 first_block_id,
                 last_block_id,
-                final_hash: hex::encode(final_hash.clone()),
+                final_hash: hex::encode(final_hash),
                 pubkey: pubkey.clone(),
             };
 
@@ -207,7 +201,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let post_url = "http://xenminer.mooo.com:5000/store_data";
             let response = client.post(post_url)
                 .header("Content-Type", "application/json")
-                .body(json_output.clone())
+                .body(json_output.clone()) // Clone json_output here
                 .send()?;
 
             if response.status().is_success() {
