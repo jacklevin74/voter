@@ -15,6 +15,8 @@ use hex;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use num_cpus;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Deserialize)]
 struct BlockRecord {
@@ -113,90 +115,105 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Output the public key
     println!("Public Key: {}", pubkey);
 
-    // Existing functionality to fetch and verify blocks
     let client = Client::new();
-    let response = client.get("http://xenblocks.io:4447/getblocks/lastblock")
-        .send()?
-        .text()?;
-
-    let records: Vec<BlockRecord> = serde_json::from_str(&response)?;
 
     // Initialize the final hash with an empty hash (all zeros)
     let mut final_hash = Sha256::new().finalize_reset().to_vec();
-    let mut first_block_id = 0;
-    let mut last_block_id = 0;
-    let mut first = true;
+    let mut global_hash = String::new();
 
-    // Use rayon for parallel processing
-    let results: Vec<(u64, String, String)> = records
-        .par_iter()
-        .map(|record| {
-            let key = record.key.as_bytes();
-            let key_str = &record.key;
-            let hash_to_verify = &record.hash_to_verify;
-            let flag = if hash_to_verify.contains("XEN11") {
-                "XEN11"
-            } else if hash_to_verify.contains("XUNI") {
-                "XUNI"
-            } else {
-                ""
-            };
+    loop {
+        // Fetch data from the server
+        let response = client.get("http://xenblocks.io:4447/getblocks/lastblock")
+            .send()?
+            .text()?;
 
-            let verification_result = match verify_hash(key, hash_to_verify) {
-                Ok(_) => format!("Verification: Ok"),
-                Err(err) => format!("Verification failed: {}", err),
-            };
-            let block_id = record.block_id;
-
-            println!("hash_id: {} key: {} result: {}, target: {}", block_id, key_str, verification_result, flag);
-            (block_id, verification_result, hash_to_verify.clone())
-        })
-        .collect();
-
-    // Sort the results by block_id in ascending order
-    let mut sorted_results = results.clone();
-    sorted_results.sort_by_key(|k| k.0);
-
-    // Process the results to ensure order and update final hash
-    for (block_id, _verification_result, hash_to_verify) in sorted_results {
-        if first {
-            first_block_id = block_id;
-            first = false;
-        }
-        last_block_id = block_id;
-
-        // Perform SHA-256 hashing
+        // Calculate the hash of the data payload
         let mut hasher = Sha256::new();
-        hasher.update(&final_hash);
-        hasher.update(hash_to_verify.as_bytes());
-        final_hash = hasher.finalize_reset().to_vec();
+        hasher.update(response.as_bytes());
+        let current_hash = hex::encode(hasher.finalize_reset());
+
+        // Compare the hash with the global hash
+        if current_hash != global_hash {
+            // Update the global hash
+            global_hash = current_hash.clone();
+
+            // Deserialize the response
+            let records: Vec<BlockRecord> = serde_json::from_str(&response)?;
+
+            // Process the records
+            let results: Vec<(u64, String, String)> = records
+                .par_iter()
+                .map(|record| {
+                    let key = record.key.as_bytes();
+                    let key_str = &record.key;
+                    let hash_to_verify = &record.hash_to_verify;
+                    let flag = if hash_to_verify.contains("XEN11") {
+                        "XEN11"
+                    } else if hash_to_verify.contains("XUNI") {
+                        "XUNI"
+                    } else {
+                        ""
+                    };
+
+                    let verification_result = match verify_hash(key, hash_to_verify) {
+                        Ok(_) => format!("Verification: Ok"),
+                        Err(err) => format!("Verification failed: {}", err),
+                    };
+                    let block_id = record.block_id;
+
+                    println!("hash_id: {} key: {} result: {}, target: {}", block_id, key_str, verification_result, flag);
+                    (block_id, verification_result, hash_to_verify.clone())
+                })
+                .collect();
+
+            // Sort the results by block_id in ascending order
+            let mut sorted_results = results.clone();
+            sorted_results.sort_by_key(|k| k.0);
+
+            // Set the first block ID
+            let first_block_id = sorted_results.first().map(|res| res.0).unwrap_or(0);
+            let mut last_block_id = first_block_id;
+
+            // Process the results to ensure order and update final hash
+            for (block_id, _verification_result, hash_to_verify) in sorted_results {
+                last_block_id = block_id;
+
+                // Perform SHA-256 hashing
+                let mut hasher = Sha256::new();
+                hasher.update(&final_hash);
+                hasher.update(hash_to_verify.as_bytes());
+                final_hash = hasher.finalize_reset().to_vec();
+            }
+
+            // Prepare the output
+            let output = Output {
+                first_block_id,
+                last_block_id,
+                final_hash: hex::encode(final_hash.clone()),
+                pubkey: pubkey.clone(),
+            };
+
+            // Serialize output to JSON
+            let json_output = serde_json::to_string_pretty(&output)?;
+            println!("\nFinal Output:\n{}", json_output);
+
+            // Send the output JSON via POST request to the specified URL
+            let post_url = "http://xenminer.mooo.com:5000/store_data";
+            let response = client.post(post_url)
+                .header("Content-Type", "application/json")
+                .body(json_output)
+                .send()?;
+
+            if response.status().is_success() {
+                println!("Data successfully sent to the server.");
+            } else {
+                println!("Failed to send data to the server. Status: {}", response.status());
+            }
+        } else {
+            println!("No change in data, waiting 10 seconds before next check.");
+        }
+
+        // Wait for 10 seconds before the next check
+        thread::sleep(Duration::from_secs(10));
     }
-
-    // Prepare the output
-    let output = Output {
-        first_block_id,
-        last_block_id,
-        final_hash: hex::encode(final_hash),
-        pubkey, // Add public key to the output
-    };
-
-    // Serialize output to JSON
-    let json_output = serde_json::to_string_pretty(&output)?;
-    println!("\nFinal Output:\n{}", json_output);
-
-    // Send the output JSON via POST request to the specified URL
-    let post_url = "http://xenminer.mooo.com:5000/store_data";
-    let client = Client::new();
-    let response = client.post(post_url)
-        .header("Content-Type", "application/json")
-        .body(json_output)
-        .send()?;
-
-    if response.status().is_success() {
-        println!("Data successfully sent to the server.");
-    } else {
-        println!("Failed to send data to the server. Status: {}", response.status());
-    }
-
-    Ok(())
 }
