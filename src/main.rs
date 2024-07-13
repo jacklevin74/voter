@@ -140,7 +140,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let records: Vec<BlockRecord> = serde_json::from_str(&response)?;
 
             // Process the records
-            let results: Vec<(u64, String, Vec<u8>)> = records
+            let results: Vec<(u64, String, String)> = records
                 .par_iter()
                 .map(|record| {
                     let key = record.key.as_bytes();
@@ -161,7 +161,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let block_id = record.block_id;
 
                     println!("hash_id: {} key: {} result: {}, target: {}", block_id, key_str, verification_result, flag);
-                    (block_id, verification_result, hex::decode(hash_to_verify).unwrap_or_default())
+                    (block_id, verification_result, hash_to_verify.clone())
                 })
                 .collect();
 
@@ -177,6 +177,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // Serialize sorted_results to JSON
             let serialized_sorted_results = serde_json::to_string(&sorted_results)?;
+            //println!("Results: {}", serialized_sorted_results);
 
             // Calculate the SHA-256 hash of the serialized JSON data
             let final_hash = Sha256::digest(serialized_sorted_results.as_bytes());
