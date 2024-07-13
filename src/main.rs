@@ -166,6 +166,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 })
                 .collect();
 
+            if results.is_empty() {
+                println!("No data fetched, waiting 10 seconds before next check.");
+                thread::sleep(Duration::from_secs(10));
+                continue;
+            }
+
             // Sort the results by block_id in ascending order
             let mut sorted_results = results.clone();
             sorted_results.sort_by_key(|k| k.0);
@@ -201,11 +207,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             let post_url = "http://xenminer.mooo.com:5000/store_data";
             let response = client.post(post_url)
                 .header("Content-Type", "application/json")
-                .body(json_output)
+                .body(json_output.clone())
                 .send()?;
 
             if response.status().is_success() {
                 println!("Data successfully sent to the server.");
+                // Log the submitted data
+                let mut log_file = OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open("voter.log")?;
+                writeln!(log_file, "{}", json_output)?;
             } else {
                 println!("Failed to send data to the server. Status: {}", response.status());
             }
