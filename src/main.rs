@@ -16,7 +16,7 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use num_cpus;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Deserialize)]
 struct BlockRecord {
@@ -139,6 +139,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             // Deserialize the response
             let records: Vec<BlockRecord> = serde_json::from_str(&response)?;
 
+            // Start the timer
+            let start_time = Instant::now();
+
             // Process the records
             let results: Vec<(u64, String, String)> = records
                 .par_iter()
@@ -164,6 +167,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                     (block_id, verification_result, hash_to_verify.clone())
                 })
                 .collect();
+
+            // Stop the timer and print the elapsed time
+            let duration = start_time.elapsed();
+            println!("\nTime taken for verification: {:?}", duration);
 
             if results.is_empty() {
                 println!("No data fetched, waiting 10 seconds before next check.");
@@ -217,7 +224,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 println!("Failed to send data to the server. Status: {}", response.status());
             }
         } else {
-            println!("No change in data, waiting 10 seconds before next check.");
+            println!("Waiting for hashes to be mined for 10 seconds before next check.");
         }
 
         // Wait for 10 seconds before the next check
