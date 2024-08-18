@@ -17,6 +17,7 @@ use rayon::ThreadPoolBuilder;
 use num_cpus;
 use std::thread;
 use std::time::{Duration, Instant};
+use std::path::Path;
 
 #[derive(Deserialize)]
 struct BlockRecord {
@@ -33,6 +34,11 @@ struct Output {
     last_block_id: u64,
     final_hash: String,
     pubkey: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Counter {
+    value: u32,
 }
 
 fn verify_hash(key: &[u8], hashed_password: &str) -> Result<(), String> {
@@ -85,6 +91,11 @@ fn generate_keypair(file_path: &str) -> Result<Keypair, Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    //Creating counter
+    let counter_file_path = "counter.json"
+    let path = Path::new(counter_file_path);
+    create_counter_file(&path)?;
+    let mut counter = read_counter_file(&path)?;
     // Argument parsing
     let matches = Command::new("My App")
         .version("1.0")
@@ -214,6 +225,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             if response.status().is_success() {
                 println!("Data successfully sent to the server.");
+                increment_counter(&mut counter, &path)?;
                 // Log the submitted data
                 let mut log_file = OpenOptions::new()
                     .append(true)
@@ -230,4 +242,34 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Wait for 10 seconds before the next check
         thread::sleep(Duration::from_secs(10));
     }
+}
+
+fn create_counter_file(path: &Path) -> std::io::Result<()> {
+    if path.exists() {
+        println!("File '{}' already exists. Skipping creation.", path.display());
+        return Ok(());
+    }
+    let counter = Counter { value: 0 };
+    let mut file = File::create(&path)?;
+    let json = serde_json::to_string_pretty(&counter)?;
+    file.write_all(json.as_bytes())?;
+    println!("Created '{}' with initial value of 0", path.display());
+    Ok(())
+}
+
+fn read_counter_file(path: &Path) -> std::io::Result<Counter> {
+    let mut file = File::open(&path)?;
+    let mut json = String::new();
+    file.read_to_string(&mut json)?;
+    let counter: Counter = serde_json::from_str(&json)?;
+    Ok(counter)
+}
+
+fn increment_counter(counter: &mut Counter, path: &Path) -> std::io::Result<()> {
+    counter.value += 1;
+    let json = serde_json::to_string_pretty(&counter)?;
+    let mut file = OpenOptions::new().write(true).truncate(true).open(path)?;
+    file.write_all(json.as_bytes())?;
+    println!("Total blocks verified: {}", counter.value * 100);
+    Ok(())
 }
