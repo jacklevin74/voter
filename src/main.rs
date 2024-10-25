@@ -206,7 +206,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("\nFinal Output:\n{}", json_output);
 
             // Send the output JSON via POST request to the specified URL
-            let post_url = "http://xenminer.mooo.com:5000/store_data";
+            let post_url = "http://xenblocks.io:5000/store_data";
             let response = client.post(post_url)
                 .header("Content-Type", "application/json")
                 .body(json_output.clone()) // Clone json_output here
