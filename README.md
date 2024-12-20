@@ -27,6 +27,6 @@ $ ./target/release/voter
 During initialization, the node will create id.json file with your private key so you are be identified among other nodes,
 this is also where you will receive your future rewards.
 As your lightnode runs, it will submit computed data to xenblocks consensus ledger, which can be accessed here:
-http://xenminer.mooo.com:5000/show_data
+http://xenblocks.io:5000/show_data
 
 The node will also write into a log file (voter.log) in the same directory.
